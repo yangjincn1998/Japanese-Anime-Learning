@@ -14,13 +14,13 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
-    ForeignKeyConstraint,
     Index,
     Integer,
     JSON,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -303,46 +303,64 @@ class DictionaryExample(Base):
     word: Mapped[Word] = relationship(back_populates="dictionary_examples")
 
 
-class SubtitleCollection(Base):
-    """字幕集合及其目录身份。
+class SubtitleDirectory(Base):
+    """本地字幕目录树的邻接表节点。
+
+    每个节点只保存当前目录片段和父目录 ID；完整路径通过父链递归得到。
 
     Attributes:
-        id: 字幕集合内部自增主键。
-        path: 字幕集合的规范化绝对路径。
-        name: 字幕集合显示名称。
+        id: 字幕目录内部自增主键。
+        parent_id: 父目录 ID；根目录为空。
+        segment_name: 当前目录名称片段。
     """
 
-    __tablename__ = "subtitle_collection"
+    __tablename__ = "subtitle_directory"
     __table_args__ = (
-        UniqueConstraint(
-            "path",
-            name="uq_subtitle_collection_path",
+        Index(
+            "uq_subtitle_directory_sibling_name",
+            "parent_id",
+            "segment_name",
+            unique=True,
+            sqlite_where=text("parent_id IS NOT NULL"),
         ),
-        {"comment": "本地字幕目录组成的字幕集合。"},
+        Index(
+            "uq_subtitle_directory_root_name",
+            "segment_name",
+            unique=True,
+            sqlite_where=text("parent_id IS NULL"),
+        ),
+        {"comment": "本地字幕目录树的邻接表节点。"},
     )
 
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
-        comment="字幕集合内部自增主键。",
+        comment="字幕目录内部自增主键。",
     )
-    path: Mapped[str] = mapped_column(
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subtitle_directory.id", ondelete="CASCADE"),
+        comment="父目录 ID；根目录为空。",
+    )
+    segment_name: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        comment="字幕集合的规范化绝对路径。",
-    )
-    name: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        comment="字幕集合显示名称。",
+        comment="当前目录名称片段。",
     )
 
-    files: Mapped[list[SubtitleFile]] = relationship(
-        back_populates="collection",
+    parent: Mapped[SubtitleDirectory | None] = relationship(
+        back_populates="children",
+        remote_side=[id],
+    )
+    children: Mapped[list[SubtitleDirectory]] = relationship(
+        back_populates="parent",
         cascade="all, delete-orphan",
     )
-    deck_binding: Mapped[AnkiDeckCollection | None] = relationship(
-        back_populates="subtitle_collection",
+    files: Mapped[list[SubtitleFile]] = relationship(
+        back_populates="directory",
+        cascade="all, delete-orphan",
+    )
+    deck_binding: Mapped[SubtitleDirectoryDeck | None] = relationship(
+        back_populates="directory",
         cascade="all, delete-orphan",
         uselist=False,
     )
@@ -353,7 +371,7 @@ class SubtitleFile(Base):
 
     Attributes:
         id: 字幕文件内部自增主键。
-        collection_id: 所属字幕集合 ID。
+        directory_id: 所属字幕目录 ID。
         content_hash: 字幕文件内容哈希，用于识别文件变化，不用于去重。
         name: 字幕文件名称。
         path: 字幕文件的规范化绝对路径。
@@ -362,16 +380,16 @@ class SubtitleFile(Base):
     __tablename__ = "subtitle_file"
     __table_args__ = (
         UniqueConstraint(
-            "collection_id",
+            "directory_id",
             "name",
-            name="uq_subtitle_file_collection_name",
+            name="uq_subtitle_file_directory_name",
         ),
         UniqueConstraint(
             "path",
             name="uq_subtitle_file_path",
         ),
-        Index("subtitle_file_collection", "collection_id"),
-        {"comment": "字幕集合中的本地字幕文件。"},
+        Index("subtitle_file_directory", "directory_id"),
+        {"comment": "字幕目录中的本地字幕文件。"},
     )
 
     id: Mapped[int] = mapped_column(
@@ -379,10 +397,10 @@ class SubtitleFile(Base):
         primary_key=True,
         comment="字幕文件内部自增主键。",
     )
-    collection_id: Mapped[int] = mapped_column(
-        ForeignKey("subtitle_collection.id", ondelete="CASCADE"),
+    directory_id: Mapped[int] = mapped_column(
+        ForeignKey("subtitle_directory.id", ondelete="CASCADE"),
         nullable=False,
-        comment="所属字幕集合 ID。",
+        comment="所属字幕目录 ID。",
     )
     content_hash: Mapped[str] = mapped_column(
         Text,
@@ -400,17 +418,12 @@ class SubtitleFile(Base):
         comment="字幕文件的规范化绝对路径。",
     )
 
-    collection: Mapped[SubtitleCollection] = relationship(
+    directory: Mapped[SubtitleDirectory] = relationship(
         back_populates="files",
     )
     entries: Mapped[list[SubtitleEntry]] = relationship(
         back_populates="subtitle_file",
         cascade="all, delete-orphan",
-    )
-    deck_binding: Mapped[AnkiDeck | None] = relationship(
-        back_populates="subtitle_file",
-        cascade="all, delete-orphan",
-        uselist=False,
     )
 
 
@@ -494,7 +507,6 @@ class WordOccurrence(Base):
     Attributes:
         id: 词项出现内部自增主键。
         entry_id: 所属字幕条目 ID。
-        word_id: 匹配到的词典词条 ID。
         word_form_id: 匹配到的词典词形 ID。
         matched_text: 在字幕日文文本中命中的实际文本。
         position: 同一个字幕条目内的出现位置标识。
@@ -504,14 +516,12 @@ class WordOccurrence(Base):
     __table_args__ = (
         UniqueConstraint(
             "entry_id",
-            "word_id",
             "word_form_id",
             "position",
-            name="uq_word_occurrence_entry_word_form_position",
+            name="uq_word_occurrence_entry_form_position",
         ),
         CheckConstraint("position >= 0", name="ck_word_occurrence_position"),
         Index("word_occurrence_entry", "entry_id"),
-        Index("word_occurrence_word", "word_id"),
         Index("word_occurrence_form", "word_form_id"),
         {"comment": "字幕条目中已解析到词典词形的词项出现。"},
     )
@@ -525,11 +535,6 @@ class WordOccurrence(Base):
         ForeignKey("subtitle_entry.id", ondelete="CASCADE"),
         nullable=False,
         comment="所属字幕条目 ID。",
-    )
-    word_id: Mapped[int] = mapped_column(
-        ForeignKey("word.id", ondelete="RESTRICT"),
-        nullable=False,
-        comment="匹配到的词典词条 ID。",
     )
     word_form_id: Mapped[int] = mapped_column(
         ForeignKey("word_form.id", ondelete="RESTRICT"),
@@ -550,9 +555,6 @@ class WordOccurrence(Base):
     subtitle_entry: Mapped[SubtitleEntry] = relationship(
         back_populates="occurrences",
     )
-    word: Mapped[Word] = relationship(
-        foreign_keys=[word_id],
-    )
     word_form: Mapped[WordForm] = relationship(
         foreign_keys=[word_form_id],
     )
@@ -562,180 +564,152 @@ class WordOccurrence(Base):
     )
 
 
-class AnkiDeckCollection(Base):
-    """字幕集合对应的 Anki 集合级 deck。
-
-    Attributes:
-        id: Anki 集合级 deck 映射内部自增主键。
-        subtitle_collection_id: 对应的字幕集合 ID。
-        external_deck_id: Anki 返回的远端 deck ID；尚未同步时为空。
-        deck_name: Anki deck 完整名称。
-        last_synced_at: 最后一次同步成功时间。
-    """
-
-    __tablename__ = "anki_deck_collection"
-    __table_args__ = (
-        UniqueConstraint(
-            "subtitle_collection_id",
-            name="uq_anki_deck_collection_subtitle_collection",
-        ),
-        UniqueConstraint(
-            "external_deck_id",
-            name="uq_anki_deck_collection_external_deck",
-        ),
-        UniqueConstraint(
-            "deck_name",
-            name="uq_anki_deck_collection_deck_name",
-        ),
-        {"comment": "字幕集合与 Anki 集合级 deck 的一对一映射。"},
-    )
-
-    id: Mapped[int] = mapped_column(
-        Integer,
-        primary_key=True,
-        comment="Anki 集合级 deck 映射内部自增主键。",
-    )
-    subtitle_collection_id: Mapped[int] = mapped_column(
-        ForeignKey("subtitle_collection.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="对应的字幕集合 ID。",
-    )
-    external_deck_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        comment="Anki 返回的远端 deck ID；尚未同步时为空。",
-    )
-    deck_name: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        comment="Anki deck 完整名称。",
-    )
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime,
-        comment="最后一次同步成功时间。",
-    )
-
-    subtitle_collection: Mapped[SubtitleCollection] = relationship(
-        back_populates="deck_binding",
-    )
-    decks: Mapped[list[AnkiDeck]] = relationship(
-        back_populates="deck_collection",
-        cascade="all, delete-orphan",
-    )
-
-
 class AnkiDeck(Base):
-    """字幕文件对应的 Anki 最小 deck。
+    """Anki deck 树的邻接表节点。
 
     Attributes:
-        id: Anki 最小 deck 映射内部自增主键。
-        deck_collection_id: 所属 Anki 集合级 deck 映射 ID。
-        subtitle_file_id: 对应的字幕文件 ID。
+        id: Anki deck 映射内部自增主键。
+        parent_id: 父 deck ID；根 deck 为空。
+        segment_name: 当前 deck 名称片段。
         external_deck_id: Anki 返回的远端 deck ID；尚未同步时为空。
-        deck_name: Anki deck 完整名称。
         last_synced_at: 最后一次同步成功时间。
     """
 
     __tablename__ = "anki_deck"
     __table_args__ = (
         UniqueConstraint(
-            "id",
-            "deck_collection_id",
-            name="uq_anki_deck_id_deck_collection",
-        ),
-        UniqueConstraint(
-            "subtitle_file_id",
-            name="uq_anki_deck_subtitle_file",
-        ),
-        UniqueConstraint(
             "external_deck_id",
             name="uq_anki_deck_external_deck",
         ),
-        UniqueConstraint(
-            "deck_name",
-            name="uq_anki_deck_deck_name",
+        Index(
+            "uq_anki_deck_sibling_name",
+            "parent_id",
+            "segment_name",
+            unique=True,
+            sqlite_where=text("parent_id IS NOT NULL"),
         ),
-        Index("idx_anki_deck_deck_collection", "deck_collection_id"),
-        {"comment": "字幕文件与 Anki 最小 deck 的一对一映射。"},
+        Index(
+            "uq_anki_deck_root_name",
+            "segment_name",
+            unique=True,
+            sqlite_where=text("parent_id IS NULL"),
+        ),
+        {"comment": "Anki deck 树的邻接表节点。"},
     )
 
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
-        comment="Anki 最小 deck 映射内部自增主键。",
+        comment="Anki deck 映射内部自增主键。",
     )
-    deck_collection_id: Mapped[int] = mapped_column(
-        ForeignKey("anki_deck_collection.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="所属 Anki 集合级 deck 映射 ID。",
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("anki_deck.id", ondelete="CASCADE"),
+        comment="父 deck ID；根 deck 为空。",
     )
-    subtitle_file_id: Mapped[int] = mapped_column(
-        ForeignKey("subtitle_file.id", ondelete="CASCADE"),
+    segment_name: Mapped[str] = mapped_column(
+        Text,
         nullable=False,
-        comment="对应的字幕文件 ID。",
+        comment="当前 deck 名称片段。",
     )
     external_deck_id: Mapped[int | None] = mapped_column(
         BigInteger,
         comment="Anki 返回的远端 deck ID；尚未同步时为空。",
-    )
-    deck_name: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        comment="Anki deck 完整名称。",
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         comment="最后一次同步成功时间。",
     )
 
-    deck_collection: Mapped[AnkiDeckCollection] = relationship(
-        back_populates="decks",
+    parent: Mapped[AnkiDeck | None] = relationship(
+        back_populates="children",
+        remote_side=[id],
     )
-    subtitle_file: Mapped[SubtitleFile] = relationship(
+    children: Mapped[list[AnkiDeck]] = relationship(
+        back_populates="parent",
+        cascade="all, delete-orphan",
+    )
+    directory_binding: Mapped[SubtitleDirectoryDeck | None] = relationship(
+        back_populates="deck",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class SubtitleDirectoryDeck(Base):
+    """字幕目录与 Anki deck 的一对一映射。
+
+    映射只约束节点本身；父子关系同构约束由确定性核心校验。
+
+    Attributes:
+        directory_id: 字幕目录 ID。
+        deck_id: Anki deck 映射 ID。
+    """
+
+    __tablename__ = "subtitle_directory_deck"
+    __table_args__ = (
+        UniqueConstraint(
+            "deck_id",
+            name="uq_subtitle_directory_deck_deck",
+        ),
+        {"comment": "字幕目录与 Anki deck 的一对一映射。"},
+    )
+
+    directory_id: Mapped[int] = mapped_column(
+        ForeignKey("subtitle_directory.id", ondelete="CASCADE"),
+        primary_key=True,
+        comment="字幕目录 ID。",
+    )
+    deck_id: Mapped[int] = mapped_column(
+        ForeignKey("anki_deck.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Anki deck 映射 ID。",
+    )
+
+    directory: Mapped[SubtitleDirectory] = relationship(
         back_populates="deck_binding",
     )
-    notes: Mapped[list[AnkiNote]] = relationship(
-        back_populates="deck",
-        foreign_keys="AnkiNote.deck_id, AnkiNote.deck_collection_id",
+    deck: Mapped[AnkiDeck] = relationship(
+        back_populates="directory_binding",
     )
 
 
 class AnkiNote(Base):
-    """一个词典词条在一个 Anki 集合级 deck 中对应的 note。
+    """一个词典词条在一个根 deck 范围内对应的 Anki note。
 
     Attributes:
         id: Anki note 映射内部自增主键。
-        guid: Anki note 的稳定 GUID。
-        external_note_id: AnkiConnect 返回的远端 note ID；尚未同步时为空。
-        deck_collection_id: 所属 Anki 集合级 deck 映射 ID。
-        deck_id: note 当前所在的 Anki 最小 deck 映射 ID。
         word_id: 对应的词典词条 ID。
+        collection_deck_id: 作为 collection 根节点的 Anki deck ID。
+        deck_id: note 当前所在的 Anki deck ID。
+        external_note_id: AnkiConnect 返回的远端 note ID；尚未同步时为空。
+        anki_guid: Anki note 的真实 GUID；尚未取得时为空。
+        external_card_id: Anki 返回的远端 card ID；尚未同步时为空。
         last_synced_at: 最后一次同步成功时间。
     """
 
     __tablename__ = "anki_note"
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["deck_id", "deck_collection_id"],
-            ["anki_deck.id", "anki_deck.deck_collection_id"],
-            name="fk_anki_note_deck_collection",
-            ondelete="RESTRICT",
-        ),
         UniqueConstraint(
             "word_id",
-            "deck_collection_id",
-            name="uq_anki_note_word_deck_collection",
+            "collection_deck_id",
+            name="uq_anki_note_word_collection_deck",
         ),
         UniqueConstraint(
-            "guid",
-            name="uq_anki_note_guid",
+            "anki_guid",
+            name="uq_anki_note_anki_guid",
         ),
         UniqueConstraint(
             "external_note_id",
             name="uq_anki_note_external_note",
         ),
+        UniqueConstraint(
+            "external_card_id",
+            name="uq_anki_note_external_card",
+        ),
         Index("anki_note_deck", "deck_id"),
+        Index("anki_note_collection_deck", "collection_deck_id"),
         Index("anki_note_word", "word_id"),
-        {"comment": "词典词条在 Anki 集合级 deck 中的稳定 note 映射。"},
+        {"comment": "词典词条在某个根 deck 范围内的稳定 note 映射。"},
     )
 
     id: Mapped[int] = mapped_column(
@@ -743,38 +717,43 @@ class AnkiNote(Base):
         primary_key=True,
         comment="Anki note 映射内部自增主键。",
     )
-    guid: Mapped[str] = mapped_column(
-        Text,
+    word_id: Mapped[int] = mapped_column(
+        ForeignKey("word.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="Anki note 的稳定 GUID。",
+        comment="对应的词典词条 ID。",
+    )
+    collection_deck_id: Mapped[int] = mapped_column(
+        ForeignKey("anki_deck.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="作为 collection 根节点的 Anki deck ID。",
+    )
+    deck_id: Mapped[int] = mapped_column(
+        ForeignKey("anki_deck.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="note 当前所在的 Anki deck ID。",
     )
     external_note_id: Mapped[int | None] = mapped_column(
         BigInteger,
         comment="AnkiConnect 返回的远端 note ID；尚未同步时为空。",
     )
-    deck_collection_id: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        comment="所属 Anki 集合级 deck 映射 ID。",
+    anki_guid: Mapped[str | None] = mapped_column(
+        Text,
+        comment="Anki note 的真实 GUID；尚未取得时为空。",
     )
-    deck_id: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        comment="note 当前所在的 Anki 最小 deck 映射 ID。",
-    )
-    word_id: Mapped[int] = mapped_column(
-        ForeignKey("word.id", ondelete="RESTRICT"),
-        nullable=False,
-        comment="对应的词典词条 ID。",
+    external_card_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        comment="Anki 返回的远端 card ID；尚未同步时为空。",
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         comment="最后一次同步成功时间。",
     )
 
+    collection_deck: Mapped[AnkiDeck] = relationship(
+        foreign_keys=[collection_deck_id],
+    )
     deck: Mapped[AnkiDeck] = relationship(
-        back_populates="notes",
-        foreign_keys=[deck_id, deck_collection_id],
+        foreign_keys=[deck_id],
     )
     word: Mapped[Word] = relationship(
         foreign_keys=[word_id],
