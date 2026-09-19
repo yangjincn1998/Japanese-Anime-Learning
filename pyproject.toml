@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jlpt-db"
+version = "0.1.0"
+description = "Import the local 5mdld JLPT deck into a queryable SQLite database."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "alembic>=1.13,<2",
+    "SQLAlchemy>=2.0,<3",
+]
+
+[project.scripts]
+jlpt-db = "jlpt_db.cli:main"
+
+[dependency-groups]
+dev = [
+    "black>=25.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["jlpt_db*"]
+
+[tool.setuptools.package-data]
+jlpt_db = [
+    "migrations/*.mako",
+    "migrations/*.py",
+    "migrations/versions/*.py",
+]
+
+[tool.black]
+target-version = ["py311"]
+line-length = 88
