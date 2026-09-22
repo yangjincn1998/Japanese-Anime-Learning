@@ -304,110 +304,143 @@ class DictionaryExample(Base):
     word: Mapped[Word] = relationship(back_populates="dictionary_examples")
 
 
-class AnalysisRoot(Base):
-    """一次用户拖入形成的分析作用域。
-
-    相同规范化根路径重复拖入时复用同一条记录，因此目录和 deck 映射保持幂等。
+class AnalysisRequest(Base):
+    """一次用户提交的字幕分析请求。
 
     Attributes:
-        id: 分析作用域内部自增主键。
-        root_path: 用户拖入的根目录显示路径。
-        root_path_key: 规范化后的根路径唯一键。
-        created_at: 记录创建时间。
-        updated_at: 记录最后更新时间。
+        id: 分析请求内部自增主键。
+        requested_path: 用户请求分析的显示路径。
+        requested_path_key: 规范化后的请求路径。
+        started_at: 请求创建时间。
+        status: 请求当前状态。
+        model_name: 本次请求使用的模型名称。
+        prompt_version: 本次请求使用的提示词版本。
+        options_json: 本次请求的参数快照。
     """
 
-    __tablename__ = "analysis_root"
-    __table_args__ = (
-        UniqueConstraint(
-            "root_path_key",
-            name="uq_analysis_root_root_path_key",
-        ),
-        {"comment": "一次用户拖入形成的根目录分析作用域。"},
-    )
+    __tablename__ = "analysis_request"
+    __table_args__ = ({"comment": "一次用户提交的字幕分析请求。"},)
 
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
-        comment="分析作用域内部自增主键。",
+        comment="分析请求内部自增主键。",
     )
-    root_path: Mapped[str] = mapped_column(
+    requested_path: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        comment="用户拖入的根目录显示路径。",
+        comment="用户请求分析的显示路径。",
     )
-    root_path_key: Mapped[str] = mapped_column(
+    requested_path_key: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        comment="规范化后的根路径唯一键。",
+        comment="规范化后的请求路径。",
     )
-    created_at: Mapped[datetime] = mapped_column(
+    started_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         server_default=func.current_timestamp(),
-        comment="记录创建时间。",
+        comment="请求创建时间。",
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+    status: Mapped[str] = mapped_column(
+        Text,
         nullable=False,
-        server_default=func.current_timestamp(),
-        onupdate=func.current_timestamp(),
-        comment="记录最后更新时间。",
+        comment="请求当前状态。",
+    )
+    model_name: Mapped[str | None] = mapped_column(
+        Text,
+        comment="本次请求使用的模型名称。",
+    )
+    prompt_version: Mapped[str | None] = mapped_column(
+        Text,
+        comment="本次请求使用的提示词版本。",
+    )
+    options_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        comment="本次请求的参数快照。",
     )
 
-    directories: Mapped[list[SubtitleDirectory]] = relationship(
-        back_populates="analysis_root",
+    directory_links: Mapped[list[Analyzes]] = relationship(
+        back_populates="analysis_request",
         cascade="all, delete-orphan",
     )
 
 
-class SubtitleDirectory(Base):
-    """分析作用域内的字幕目录树节点。
+class Analyzes(Base):
+    """分析请求与目录之间的分析联系。
 
-    根目录也保存为一行，is_root 标识根节点。完整路径由相邻节点递归得到，
-    relative_path_key 用于同一分析作用域内的幂等定位。
+    Attributes:
+        analysis_request_id: 所属分析请求 ID。
+        directory_id: 被分析的目录 ID。
+        is_root: 是否为该请求的根目录。
+        depth: 相对根目录的深度。
+    """
+
+    __tablename__ = "analyzes"
+    __table_args__ = (
+        CheckConstraint("is_root IN (0, 1)", name="ck_analyzes_is_root"),
+        CheckConstraint("depth >= 0", name="ck_analyzes_depth"),
+        CheckConstraint(
+            "(is_root = 1 AND depth = 0) OR (is_root = 0 AND depth > 0)",
+            name="ck_analyzes_root_depth",
+        ),
+        Index(
+            "uq_analyzes_single_root",
+            "analysis_request_id",
+            unique=True,
+            sqlite_where=text("is_root = 1"),
+        ),
+        Index("analyzes_directory", "directory_id"),
+        {"comment": "分析请求与其覆盖目录之间的分析联系。"},
+    )
+
+    analysis_request_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_request.id", ondelete="CASCADE"),
+        primary_key=True,
+        comment="所属分析请求 ID。",
+    )
+    directory_id: Mapped[int] = mapped_column(
+        ForeignKey("subtitle_directory.id", ondelete="CASCADE"),
+        primary_key=True,
+        comment="被分析的目录 ID。",
+    )
+    is_root: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="是否为该请求的根目录；1 表示根目录。",
+    )
+    depth: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="相对根目录的深度。",
+    )
+
+    analysis_request: Mapped[AnalysisRequest] = relationship(
+        back_populates="directory_links",
+    )
+    directory: Mapped[SubtitleDirectory] = relationship(
+        back_populates="analysis_links",
+    )
+
+
+class SubtitleDirectory(Base):
+    """本地字幕目录树的邻接表节点。
 
     Attributes:
         id: 字幕目录内部自增主键。
-        analysis_root_id: 所属分析作用域 ID。
+        path: 目录的规范化绝对路径。
+        path_key: 目录规范化路径唯一键。
         parent_directory_id: 父目录 ID；根目录为空。
         segment_name: 当前目录名称片段。
-        relative_path_key: 相对于分析根目录的规范化路径唯一键。
         sort_order: 同一父目录下的稳定排序值。
-        is_root: 是否为分析根目录。
     """
 
     __tablename__ = "subtitle_directory"
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["parent_directory_id", "analysis_root_id"],
-            ["subtitle_directory.id", "subtitle_directory.analysis_root_id"],
-            name="fk_subtitle_directory_parent_scope",
-            ondelete="CASCADE",
-        ),
         UniqueConstraint(
-            "analysis_root_id",
-            "relative_path_key",
-            name="uq_subtitle_directory_root_relative_path",
-        ),
-        UniqueConstraint(
-            "id",
-            "analysis_root_id",
-            name="uq_subtitle_directory_id_analysis_root",
-        ),
-        UniqueConstraint(
-            "id",
-            "is_root",
-            name="uq_subtitle_directory_id_is_root",
-        ),
-        CheckConstraint(
-            "is_root IN (0, 1)",
-            name="ck_subtitle_directory_is_root",
-        ),
-        CheckConstraint(
-            "(parent_directory_id IS NULL AND is_root = 1) OR "
-            "(parent_directory_id IS NOT NULL AND is_root = 0)",
-            name="ck_subtitle_directory_root_parent",
+            "path_key",
+            name="uq_subtitle_directory_path_key",
         ),
         CheckConstraint(
             "sort_order >= 0",
@@ -428,12 +461,18 @@ class SubtitleDirectory(Base):
             sqlite_where=text("parent_directory_id IS NOT NULL"),
         ),
         Index(
-            "uq_subtitle_directory_single_root",
-            "analysis_root_id",
+            "uq_subtitle_directory_root_segment",
+            "segment_name",
             unique=True,
-            sqlite_where=text("is_root = 1"),
+            sqlite_where=text("parent_directory_id IS NULL"),
         ),
-        {"comment": "分析作用域内的本地字幕目录树节点。"},
+        Index(
+            "uq_subtitle_directory_root_order",
+            "sort_order",
+            unique=True,
+            sqlite_where=text("parent_directory_id IS NULL"),
+        ),
+        {"comment": "本地字幕目录树的邻接表节点。"},
     )
 
     id: Mapped[int] = mapped_column(
@@ -441,13 +480,18 @@ class SubtitleDirectory(Base):
         primary_key=True,
         comment="字幕目录内部自增主键。",
     )
-    analysis_root_id: Mapped[int] = mapped_column(
-        ForeignKey("analysis_root.id", ondelete="CASCADE"),
+    path: Mapped[str] = mapped_column(
+        Text,
         nullable=False,
-        comment="所属分析作用域 ID。",
+        comment="目录的规范化绝对路径。",
+    )
+    path_key: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="目录规范化路径唯一键。",
     )
     parent_directory_id: Mapped[int | None] = mapped_column(
-        Integer,
+        ForeignKey("subtitle_directory.id", ondelete="CASCADE"),
         comment="父目录 ID；根目录为空。",
     )
     segment_name: Mapped[str] = mapped_column(
@@ -455,24 +499,15 @@ class SubtitleDirectory(Base):
         nullable=False,
         comment="当前目录名称片段。",
     )
-    relative_path_key: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        comment="相对于分析根目录的规范化路径唯一键。",
-    )
     sort_order: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         comment="同一父目录下的稳定排序值。",
     )
-    is_root: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        comment="是否为分析根目录；1 表示根目录。",
-    )
 
-    analysis_root: Mapped[AnalysisRoot] = relationship(
-        back_populates="directories",
+    analysis_links: Mapped[list[Analyzes]] = relationship(
+        back_populates="directory",
+        cascade="all, delete-orphan",
     )
     parent: Mapped[SubtitleDirectory | None] = relationship(
         back_populates="children",
@@ -493,7 +528,7 @@ class SubtitleDirectory(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
-    deck_node: Mapped[DeckNode | None] = relationship(
+    normal_deck: Mapped[NormalDeck | None] = relationship(
         back_populates="directory",
         cascade="all, delete-orphan",
         uselist=False,
@@ -698,15 +733,118 @@ class WordOccurrence(Base):
     )
 
 
-class RootDeck(Base):
-    """分析根目录对应的 Anki 根 deck。
+class Deck(Base):
+    """Anki deck 树中的通用 deck 节点。
+
+    根 deck 和普通 deck 共享该表的主键、父关系和远端同步字段。
 
     Attributes:
-        id: Anki 根 deck 映射内部自增主键。
-        root_directory_id: 对应的字幕根目录 ID。
-        directory_is_root: 用于复合外键固定根目录类型。
+        id: Anki deck 映射内部自增主键。
+        deck_kind: deck 类型，root 或 normal。
+        parent_deck_id: 父 deck ID；根 deck 为空。
+        root_deck_id: 所属根 deck ID；根 deck 指向自身。
+        relative_deck_path: 相对于根 deck 的规范路径。
         external_deck_id: Anki 返回的远端 deck ID；尚未同步时为空。
         last_synced_at: 最后一次同步成功时间。
+    """
+
+    __tablename__ = "deck"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["parent_deck_id", "root_deck_id"],
+            ["deck.id", "deck.root_deck_id"],
+            name="fk_deck_parent_scope",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "id",
+            "root_deck_id",
+            name="uq_deck_id_root_deck",
+        ),
+        UniqueConstraint(
+            "root_deck_id",
+            "relative_deck_path",
+            name="uq_deck_root_relative_path",
+        ),
+        UniqueConstraint(
+            "external_deck_id",
+            name="uq_deck_external_deck",
+        ),
+        CheckConstraint(
+            "deck_kind IN ('root', 'normal')",
+            name="ck_deck_kind",
+        ),
+        CheckConstraint(
+            "(deck_kind = 'root' AND parent_deck_id IS NULL "
+            "AND root_deck_id = id) OR "
+            "(deck_kind = 'normal' AND parent_deck_id IS NOT NULL "
+            "AND root_deck_id <> id)",
+            name="ck_deck_kind_parent_scope",
+        ),
+        Index("deck_parent", "parent_deck_id"),
+        {"comment": "Anki deck 树中的通用根 deck 和普通 deck 节点。"},
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        comment="Anki deck 映射内部自增主键。",
+    )
+    deck_kind: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="deck 类型，root 或 normal。",
+    )
+    parent_deck_id: Mapped[int | None] = mapped_column(
+        Integer,
+        comment="父 deck ID；根 deck 为空。",
+    )
+    root_deck_id: Mapped[int] = mapped_column(
+        ForeignKey("deck.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="所属根 deck ID；根 deck 指向自身。",
+    )
+    relative_deck_path: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="相对于根 deck 的规范路径。",
+    )
+    external_deck_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        comment="Anki 返回的远端 deck ID；尚未同步时为空。",
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        comment="最后一次同步成功时间。",
+    )
+
+    parent_deck: Mapped[Deck | None] = relationship(
+        back_populates="children",
+        foreign_keys=[parent_deck_id],
+        remote_side=[id],
+    )
+    children: Mapped[list[Deck]] = relationship(
+        back_populates="parent_deck",
+        foreign_keys=[parent_deck_id],
+        cascade="all, delete-orphan",
+    )
+    root_deck: Mapped[Deck] = relationship(
+        back_populates="root_members",
+        foreign_keys=[root_deck_id],
+        remote_side=[id],
+    )
+    root_members: Mapped[list[Deck]] = relationship(
+        back_populates="root_deck",
+        foreign_keys=[root_deck_id],
+    )
+
+
+class RootDeck(Base):
+    """映射分析根目录的 Anki 根 deck 特化。
+
+    Attributes:
+        deck_id: 对应的通用 deck ID。
+        root_directory_id: 对应的字幕目录 ID。
     """
 
     __tablename__ = "root_deck"
@@ -715,178 +853,57 @@ class RootDeck(Base):
             "root_directory_id",
             name="uq_root_deck_root_directory",
         ),
-        UniqueConstraint(
-            "id",
-            "directory_is_root",
-            name="uq_root_deck_id_directory_is_root",
-        ),
-        UniqueConstraint(
-            "external_deck_id",
-            name="uq_root_deck_external_deck",
-        ),
-        CheckConstraint(
-            "directory_is_root = 1",
-            name="ck_root_deck_directory_is_root",
-        ),
-        ForeignKeyConstraint(
-            ["root_directory_id", "directory_is_root"],
-            ["subtitle_directory.id", "subtitle_directory.is_root"],
-            name="fk_root_deck_root_directory",
-            ondelete="CASCADE",
-        ),
-        {"comment": "分析根目录对应的 Anki 根 deck。"},
+        {"comment": "映射分析根目录的 Anki 根 deck 特化。"},
     )
 
-    id: Mapped[int] = mapped_column(
-        Integer,
+    deck_id: Mapped[int] = mapped_column(
+        ForeignKey("deck.id", ondelete="CASCADE"),
         primary_key=True,
-        comment="Anki 根 deck 映射内部自增主键。",
+        comment="对应的通用 deck ID。",
     )
     root_directory_id: Mapped[int] = mapped_column(
-        Integer,
+        ForeignKey("subtitle_directory.id", ondelete="CASCADE"),
         nullable=False,
-        comment="对应的字幕根目录 ID。",
-    )
-    directory_is_root: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=1,
-        comment="用于复合外键固定根目录类型；固定为 1。",
-    )
-    external_deck_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        comment="Anki 返回的远端 deck ID；尚未同步时为空。",
-    )
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime,
-        comment="最后一次同步成功时间。",
+        comment="对应的字幕目录 ID。",
     )
 
+    deck: Mapped[Deck] = relationship()
     root_directory: Mapped[SubtitleDirectory] = relationship(
         back_populates="root_deck",
-        foreign_keys=[root_directory_id, directory_is_root],
     )
 
 
-class DeckNode(Base):
-    """Anki 普通 deck 节点。
-
-    所有普通 deck 都属于一个根 deck。父节点要么是根 deck，要么是另一个
-    普通 deck，不能同时是两者。
+class NormalDeck(Base):
+    """映射非根字幕目录的 Anki 普通 deck 特化。
 
     Attributes:
-        id: Anki 普通 deck 映射内部自增主键。
-        root_deck_id: 所属 Anki 根 deck ID。
-        directory_id: 对应的非根字幕目录 ID。
-        directory_is_root: 用于复合外键固定非根目录类型。
-        parent_root_deck_id: 父节点为根 deck 时的 ID；否则为空。
-        parent_deck_id: 父节点为普通 deck 时的 ID；否则为空。
-        external_deck_id: Anki 返回的远端 deck ID；尚未同步时为空。
-        last_synced_at: 最后一次同步成功时间。
+        deck_id: 对应的通用 deck ID。
+        directory_id: 对应的字幕目录 ID。
     """
 
-    __tablename__ = "deck_node"
+    __tablename__ = "normal_deck"
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["directory_id", "directory_is_root"],
-            ["subtitle_directory.id", "subtitle_directory.is_root"],
-            name="fk_deck_node_directory",
-            ondelete="CASCADE",
-        ),
-        ForeignKeyConstraint(
-            ["parent_deck_id", "root_deck_id"],
-            ["deck_node.id", "deck_node.root_deck_id"],
-            name="fk_deck_node_parent_deck",
-            ondelete="RESTRICT",
-        ),
         UniqueConstraint(
             "directory_id",
-            name="uq_deck_node_directory",
+            name="uq_normal_deck_directory",
         ),
-        UniqueConstraint(
-            "id",
-            "root_deck_id",
-            name="uq_deck_node_id_root_deck",
-        ),
-        UniqueConstraint(
-            "external_deck_id",
-            name="uq_deck_node_external_deck",
-        ),
-        CheckConstraint(
-            "directory_is_root = 0",
-            name="ck_deck_node_directory_is_root",
-        ),
-        CheckConstraint(
-            "(parent_root_deck_id IS NOT NULL AND parent_deck_id IS NULL) OR "
-            "(parent_root_deck_id IS NULL AND parent_deck_id IS NOT NULL)",
-            name="ck_deck_node_single_parent",
-        ),
-        CheckConstraint(
-            "parent_root_deck_id IS NULL OR parent_root_deck_id = root_deck_id",
-            name="ck_deck_node_parent_root_scope",
-        ),
-        Index("deck_node_parent_root", "parent_root_deck_id"),
-        Index("deck_node_parent_deck", "parent_deck_id"),
-        {"comment": "属于某个 Anki 根 deck 的普通 deck 节点。"},
+        {"comment": "映射非根字幕目录的 Anki 普通 deck 特化。"},
     )
 
-    id: Mapped[int] = mapped_column(
-        Integer,
+    deck_id: Mapped[int] = mapped_column(
+        ForeignKey("deck.id", ondelete="CASCADE"),
         primary_key=True,
-        comment="Anki 普通 deck 映射内部自增主键。",
-    )
-    root_deck_id: Mapped[int] = mapped_column(
-        ForeignKey("root_deck.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="所属 Anki 根 deck ID。",
+        comment="对应的通用 deck ID。",
     )
     directory_id: Mapped[int] = mapped_column(
-        Integer,
+        ForeignKey("subtitle_directory.id", ondelete="CASCADE"),
         nullable=False,
-        comment="对应的非根字幕目录 ID。",
-    )
-    directory_is_root: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        comment="用于复合外键固定非根目录类型；固定为 0。",
-    )
-    parent_root_deck_id: Mapped[int | None] = mapped_column(
-        ForeignKey("root_deck.id", ondelete="RESTRICT"),
-        comment="父节点为根 deck 时的 ID；否则为空。",
-    )
-    parent_deck_id: Mapped[int | None] = mapped_column(
-        Integer,
-        comment="父节点为普通 deck 时的 ID；否则为空。",
-    )
-    external_deck_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        comment="Anki 返回的远端 deck ID；尚未同步时为空。",
-    )
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime,
-        comment="最后一次同步成功时间。",
+        comment="对应的字幕目录 ID。",
     )
 
-    root_deck: Mapped[RootDeck] = relationship(
-        foreign_keys=[root_deck_id],
-    )
+    deck: Mapped[Deck] = relationship()
     directory: Mapped[SubtitleDirectory] = relationship(
-        back_populates="deck_node",
-        foreign_keys=[directory_id, directory_is_root],
-    )
-    parent_root_deck: Mapped[RootDeck | None] = relationship(
-        foreign_keys=[parent_root_deck_id],
-    )
-    parent_deck: Mapped[DeckNode | None] = relationship(
-        back_populates="children",
-        foreign_keys=[parent_deck_id],
-        remote_side=[id],
-    )
-    children: Mapped[list[DeckNode]] = relationship(
-        back_populates="parent_deck",
-        foreign_keys=[parent_deck_id],
-        cascade="all, delete-orphan",
+        back_populates="normal_deck",
     )
 
 
@@ -897,7 +914,7 @@ class AnkiNote(Base):
         id: Anki note 映射内部自增主键。
         word_id: 对应的词典词条 ID。
         collection_root_deck_id: 作为 collection 根节点的 Anki 根 deck ID。
-        home_deck_id: note 当前归属的 Anki 普通 deck ID。
+        home_deck_id: note 当前归属的 Anki deck ID。
         external_note_id: AnkiConnect 返回的远端 note ID；尚未同步时为空。
         anki_guid: Anki note 的真实 GUID；尚未取得时为空。
         external_card_id: Anki 返回的远端 card ID；尚未同步时为空。
@@ -908,7 +925,7 @@ class AnkiNote(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["home_deck_id", "collection_root_deck_id"],
-            ["deck_node.id", "deck_node.root_deck_id"],
+            ["deck.id", "deck.root_deck_id"],
             name="fk_anki_note_home_deck_scope",
             ondelete="RESTRICT",
         ),
@@ -946,14 +963,14 @@ class AnkiNote(Base):
         comment="对应的词典词条 ID。",
     )
     collection_root_deck_id: Mapped[int] = mapped_column(
-        ForeignKey("root_deck.id", ondelete="RESTRICT"),
+        ForeignKey("root_deck.deck_id", ondelete="RESTRICT"),
         nullable=False,
         comment="作为 collection 根节点的 Anki 根 deck ID。",
     )
     home_deck_id: Mapped[int] = mapped_column(
-        Integer,
+        ForeignKey("deck.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="note 当前归属的 Anki 普通 deck ID。",
+        comment="note 当前归属的 Anki deck ID。",
     )
     external_note_id: Mapped[int | None] = mapped_column(
         BigInteger,
@@ -976,7 +993,7 @@ class AnkiNote(Base):
         foreign_keys=[collection_root_deck_id],
         viewonly=True,
     )
-    home_deck: Mapped[DeckNode] = relationship(
+    home_deck: Mapped[Deck] = relationship(
         foreign_keys=[home_deck_id, collection_root_deck_id],
         overlaps="collection_root_deck",
     )
