@@ -91,7 +91,7 @@ def _enrich_furigana(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jlpt-db")
+    parser = argparse.ArgumentParser(prog="japanese-learning")
     sub = parser.add_subparsers(dest="command", required=True)
 
     importer = sub.add_parser("import", help="import a 5mdld APKG or collection")
@@ -141,7 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except (FileExistsError, FileNotFoundError, RuntimeError, ValueError) as exc:
-        print(f"jlpt-db: {exc}", file=sys.stderr)
+        print(f"japanese-learning: {exc}", file=sys.stderr)
         return 2
 
 

@@ -164,7 +164,7 @@ def _collection_source(source: Path) -> Iterator[Path]:
     if not source.is_file():
         raise FileNotFoundError(source)
     if zipfile.is_zipfile(source):
-        with tempfile.TemporaryDirectory(prefix="jlpt-db-") as directory:
+        with tempfile.TemporaryDirectory(prefix="japanese-learning-") as directory:
             yield _extract_collection(source, Path(directory))
         return
     yield source

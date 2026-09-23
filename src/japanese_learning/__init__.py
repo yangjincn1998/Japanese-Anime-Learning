@@ -1,4 +1,4 @@
-"""Local JLPT vocabulary database importer."""
+"""Local Japanese learning database and subtitle analysis core."""
 
 from .enums import (
     ExampleRelation,

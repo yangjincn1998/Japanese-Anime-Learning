@@ -3,17 +3,17 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PACKAGE_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from jlpt_db.normalization import (  # noqa: E402
+from japanese_learning.normalization import (  # noqa: E402
     canonicalize_lemma,
     canonicalize_reading,
     derive_primary_reading,
     extract_obvious_variants,
 )
-from jlpt_db.enums import ExampleRelation, PartOfSpeech  # noqa: E402
-from jlpt_db.importer import _parse_examples, _parse_pos_values  # noqa: E402
+from japanese_learning.enums import ExampleRelation, PartOfSpeech  # noqa: E402
+from japanese_learning.importer import _parse_examples, _parse_pos_values  # noqa: E402
 
 
 def test_kana_headword_does_not_use_etymology_as_reading() -> None:

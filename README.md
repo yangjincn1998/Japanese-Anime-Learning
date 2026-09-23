@@ -1,9 +1,13 @@
-# jlpt-db
+# Japanese Learning
 
-Import the local `5mdld/anki-jlpt-decks` APKG into a small SQLite database.
+Local Japanese learning database for dictionary imports, subtitle analysis,
+word occurrences, and Anki synchronization.
 
-The importer is deterministic. It does not call an LLM or JMdict. The database
-uses four tables:
+See [Architecture](docs/architecture.md) for the package layout and dependency
+rules, and [Database Design](docs/database-design.md) for schema constraints.
+
+The dictionary importer is deterministic. It does not call an LLM or JMdict.
+The dictionary portion currently uses these tables:
 
 - `source_deck`: the unique `(level, frequency_class)` pair for each 5mdld deck.
 - `word`: one entry per 5mdld source note, linked to its main form and deck.
@@ -32,7 +36,7 @@ and example relation types.
 From a complete APKG:
 
 ```powershell
-uv run --project packages/jlpt-db jlpt-db import `
+uv run japanese-learning import `
   --apkg "C:\path\to\eggrolls-JLPT10k-v3.5.apkg" `
   --output "$HOME\.jlpt-study\jlpt_library.sqlite" `
   --replace
@@ -41,7 +45,7 @@ uv run --project packages/jlpt-db jlpt-db import `
 The importer also accepts an already extracted `collection.anki21`:
 
 ```powershell
-uv run --project packages/jlpt-db jlpt-db import `
+uv run japanese-learning import `
   --collection ".work\5mdld\collection.anki21" `
   --output ".work\5mdld\eggrolls-jlpt10k.sqlite" `
   --replace
@@ -50,10 +54,10 @@ uv run --project packages/jlpt-db jlpt-db import `
 ## Query
 
 ```powershell
-uv run --project packages/jlpt-db jlpt-db stats `
+uv run japanese-learning stats `
   --db ".work\5mdld\eggrolls-jlpt10k.sqlite"
 
-uv run --project packages/jlpt-db jlpt-db lookup `
+uv run japanese-learning lookup `
   --db ".work\5mdld\eggrolls-jlpt10k.sqlite" `
   "出来る"
 ```
@@ -61,10 +65,10 @@ uv run --project packages/jlpt-db jlpt-db lookup `
 ## Migrations
 
 ```powershell
-uv run --project packages/jlpt-db jlpt-db db current `
+uv run japanese-learning db current `
   --db "$HOME\.jlpt-study\jlpt_library.sqlite"
 
-uv run --project packages/jlpt-db jlpt-db db upgrade `
+uv run japanese-learning db upgrade `
   --db "$HOME\.jlpt-study\jlpt_library.sqlite"
 ```
 
@@ -73,7 +77,7 @@ uv run --project packages/jlpt-db jlpt-db db upgrade `
 Download a JmdictFurigana release, then replace the derived ruby table:
 
 ```powershell
-uv run --project packages/jlpt-db jlpt-db enrich-furigana `
+uv run japanese-learning enrich-furigana `
   --db "$HOME\.jlpt-study\jlpt_library.sqlite" `
   --input "C:\path\to\JmdictFurigana.json.zip"
 ```
@@ -87,5 +91,5 @@ same attribution and ShareAlike requirements.
 Black is installed as a development dependency. Run it after Python changes:
 
 ```powershell
-uv run --project packages/jlpt-db black packages/jlpt-db
+uv run black src tests
 ```

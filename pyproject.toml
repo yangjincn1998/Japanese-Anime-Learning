@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jlpt-db"
+name = "japanese-learning"
 version = "0.1.0"
-description = "Import the local 5mdld JLPT deck into a queryable SQLite database."
+description = "Local Japanese learning database, subtitle analysis, and Anki synchronization."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,18 +14,24 @@ dependencies = [
 ]
 
 [project.scripts]
-jlpt-db = "jlpt_db.cli:main"
+japanese-learning = "japanese_learning.cli:main"
+jlpt-db = "japanese_learning.cli:main"
 
 [dependency-groups]
 dev = [
     "black>=25.1",
+    "pytest>=8.3",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
-include = ["jlpt_db*"]
+where = ["src"]
+include = ["japanese_learning*"]
 
 [tool.setuptools.package-data]
-jlpt_db = [
+japanese_learning = [
     "migrations/*.mako",
     "migrations/*.py",
     "migrations/versions/*.py",

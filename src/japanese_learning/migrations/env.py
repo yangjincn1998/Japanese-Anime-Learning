@@ -3,7 +3,7 @@ from __future__ import annotations
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from jlpt_db.models import Base
+from japanese_learning.models import Base
 
 config = context.config
 target_metadata = Base.metadata

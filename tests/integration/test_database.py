@@ -8,24 +8,24 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PACKAGE_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from jlpt_db.engine import current_revision, initialize_database  # noqa: E402
-from jlpt_db.enums import (  # noqa: E402
+from japanese_learning.engine import current_revision, initialize_database  # noqa: E402
+from japanese_learning.enums import (  # noqa: E402
     ExampleRelation,
     FrequencyClass,
     JlptLevel,
     PartOfSpeech,
 )
-from jlpt_db.models import (  # noqa: E402
+from japanese_learning.models import (  # noqa: E402
     Base,
     DictionaryExample,
     SourceDeck,
     Word,
     WordForm,
 )
-from jlpt_db.repositories import database_stats, lookup_forms  # noqa: E402
+from japanese_learning.repositories import database_stats, lookup_forms  # noqa: E402
 
 
 def _records() -> tuple[SourceDeck, Word, WordForm, WordForm, DictionaryExample]:

@@ -7,13 +7,13 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PACKAGE_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from jlpt_db.engine import initialize_database  # noqa: E402
-from jlpt_db.enums import FrequencyClass, JlptLevel, PartOfSpeech  # noqa: E402
-from jlpt_db.furigana import enrich_furigana  # noqa: E402
-from jlpt_db.models import (  # noqa: E402
+from japanese_learning.engine import initialize_database  # noqa: E402
+from japanese_learning.enums import FrequencyClass, JlptLevel, PartOfSpeech  # noqa: E402
+from japanese_learning.furigana import enrich_furigana  # noqa: E402
+from japanese_learning.models import (  # noqa: E402
     SourceDeck,
     Word,
     WordForm,
